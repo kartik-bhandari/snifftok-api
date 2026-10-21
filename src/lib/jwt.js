@@ -35,15 +35,21 @@ export function verifyToken(token) {
  * @param {'customer'|'admin'} type  determines maxAge
  */
 export function setCookie(res, token, type) {
+  const isProd = config.isProd()
+  // In production without a shared root domain, use SameSite=none so the cookie
+  // is sent on cross-origin requests from the admin panel (onrender.com subdomains
+  // are cross-site per the public suffix list).
+  // SameSite=none requires Secure=true — always true on Render (HTTPS).
+  const sameSite = isProd && !config.cookieDomain ? 'none' : 'lax'
+
   const opts = {
     httpOnly:  true,
-    secure:    config.isProd(),
-    sameSite:  'lax',
+    secure:    isProd || sameSite === 'none',
+    sameSite,
     path:      '/',
     maxAge:    type === 'customer' ? config.customerCookieMs : config.adminCookieMs,
   }
-  // Only set Domain in production — in dev, omitting it scopes to localhost
-  if (config.isProd() && config.cookieDomain) {
+  if (isProd && config.cookieDomain) {
     opts.domain = config.cookieDomain
   }
   res.cookie(config.cookieName, token, opts)
@@ -54,13 +60,15 @@ export function setCookie(res, token, type) {
  * @param {import('express').Response} res
  */
 export function clearCookie(res) {
+  const isProd  = config.isProd()
+  const sameSite = isProd && !config.cookieDomain ? 'none' : 'lax'
   const opts = {
     httpOnly: true,
-    secure:   config.isProd(),
-    sameSite: 'lax',
+    secure:   isProd || sameSite === 'none',
+    sameSite,
     path:     '/',
   }
-  if (config.isProd() && config.cookieDomain) {
+  if (isProd && config.cookieDomain) {
     opts.domain = config.cookieDomain
   }
   res.clearCookie(config.cookieName, opts)
