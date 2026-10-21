@@ -21,16 +21,26 @@ import { requireAuth, requireAdminOrStaff, requireAdmin } from './middleware/aut
 
 const app = express()
 
+// ── CORS — must come BEFORE helmet so preflight OPTIONS gets correct headers ──
+const corsOptions = {
+  origin(origin, callback) {
+    // Allow requests with no origin (server-to-server, curl, etc.)
+    if (!origin) return callback(null, true)
+    if (config.clientOrigins.includes(origin)) return callback(null, true)
+    console.warn(`[CORS] Rejected origin: ${origin} | Allowed: ${config.clientOrigins.join(', ')}`)
+    callback(new Error(`CORS: origin ${origin} not allowed`))
+  },
+  credentials:    true,
+  allowedHeaders: ['Content-Type', 'X-Requested-With', 'Authorization', 'X-CSRF-Token'],
+  methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+}
+
+// Handle preflight for every route explicitly
+app.options('*', cors(corsOptions))
+app.use(cors(corsOptions))
+
 // ── Security headers ──────────────────────────────────────────────────────────
 app.use(helmet())
-
-// ── CORS ──────────────────────────────────────────────────────────────────────
-app.use(cors({
-  origin: config.clientOrigins,
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'X-Requested-With', 'Authorization'],
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-}))
 
 // ── Body parsing ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }))
