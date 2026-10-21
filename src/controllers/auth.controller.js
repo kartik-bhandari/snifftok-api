@@ -158,8 +158,11 @@ export async function login(req, res) {
   // 2FA is optional for development; it can be enforced via a separate policy setting.
   user.sessionVersion += 1
   await user.save()
+  const adminToken = signToken({ sub: user._id.toString(), role: user.role, v: user.sessionVersion }, '12h')
   issueSessionCookie(res, user)
-  return res.json({ user: user.toSafeObject() })
+  // Also return the token in the body so the admin SPA can use Bearer auth
+  // (avoids cross-origin cookie issues on Render's separate subdomains)
+  return res.json({ user: user.toSafeObject(), token: adminToken })
 }
 
 // ─── POST /api/auth/logout ────────────────────────────────────────────────────

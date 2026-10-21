@@ -12,7 +12,13 @@ import { config } from '../config/index.js'
  * Sets req.setupOnly = true when the admin has not yet completed 2FA setup.
  */
 export async function requireAuth(req, res, next) {
-  const token = req.cookies?.[config.cookieName]
+  // Accept token from cookie (storefront) OR Authorization: Bearer (admin SPA)
+  let token = req.cookies?.[config.cookieName]
+  if (!token) {
+    const auth = req.headers.authorization ?? ''
+    if (auth.startsWith('Bearer ')) token = auth.slice(7)
+  }
+
   if (!token) {
     return res.status(401).json({ message: 'Authentication required.' })
   }
