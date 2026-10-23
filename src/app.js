@@ -17,6 +17,7 @@ import categoriesRouter from './routes/categories.js'
 import pricingRouter    from './routes/pricing.js'
 import uploadsRouter    from './routes/uploads.js'
 import storefrontRouter from './routes/storefront.js'
+import { storefrontOrdersRouter, adminOrdersRouter } from './routes/orders.js'
 import { requireAuth, requireAdminOrStaff, requireAdmin } from './middleware/auth.js'
 
 const app = express()
@@ -57,6 +58,7 @@ app.use('/api/auth', authRouter)
 
 // Public storefront — no auth required
 app.use('/api/storefront', storefrontRouter)
+app.use('/api/storefront/orders', storefrontOrdersRouter)
 
 // Admin routes — require admin or staff role (full session only — not setupOnly)
 app.use('/api/admin', requireAuth, requireAdminOrStaff, (req, res, next) => {
@@ -68,6 +70,7 @@ app.use('/api/admin/products',   requireAuth, requireAdminOrStaff, productsRoute
 app.use('/api/admin/categories', requireAuth, requireAdminOrStaff, categoriesRouter)
 app.use('/api/admin/pricing',    requireAuth, requireAdminOrStaff, pricingRouter)
 app.use('/api/admin/uploads',    requireAuth, requireAdminOrStaff, uploadsRouter)
+app.use('/api/admin/orders',     requireAuth, requireAdminOrStaff, adminOrdersRouter)
 
 // Admin-only sub-routes (settings, reports, users)
 const adminOnlyPaths = ['/api/admin/settings', '/api/admin/reports', '/api/admin/staff']
