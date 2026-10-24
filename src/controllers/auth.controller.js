@@ -109,22 +109,22 @@ export async function login(req, res) {
   const hashToCheck = user?.passwordHash ?? DUMMY_HASH
   const passwordOk  = await bcrypt.compare(password, hashToCheck)
 
-  // Check lockout BEFORE revealing any account info
-  if (user && user.lockedUntil && user.lockedUntil > new Date()) {
-    // Still charge time even if password was right to prevent oracle attack
-    const minutesLeft = Math.max(1, Math.ceil((user.lockedUntil - Date.now()) / 60_000))
-    return res.status(423).json({
-      message: `Account temporarily locked. Try again in ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'}.`,
-    })
-  }
+  // TEMPORARILY DISABLED — account lockout check
+  // if (user && user.lockedUntil && user.lockedUntil > new Date()) {
+  //   const minutesLeft = Math.max(1, Math.ceil((user.lockedUntil - Date.now()) / 60_000))
+  //   return res.status(423).json({
+  //     message: `Account temporarily locked. Try again in ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'}.`,
+  //   })
+  // }
 
   if (!user || !passwordOk || !user.isActive) {
     if (user && !passwordOk) {
       user.failedLoginCount += 1
-      if (user.failedLoginCount >= config.loginMaxAttempts) {
-        user.lockedUntil      = new Date(Date.now() + config.lockDurationMs)
-        user.failedLoginCount = 0
-      }
+      // TEMPORARILY DISABLED — account lockout trigger
+      // if (user.failedLoginCount >= config.loginMaxAttempts) {
+      //   user.lockedUntil      = new Date(Date.now() + config.lockDurationMs)
+      //   user.failedLoginCount = 0
+      // }
       await user.save()
     }
     return res.status(401).json({ message: 'Invalid credentials.' })

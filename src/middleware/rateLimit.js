@@ -5,14 +5,14 @@
 
 import rateLimit from 'express-rate-limit'
 
-/** 5 requests per 15 minutes per IP on login and register */
+/** TEMPORARILY DISABLED — re-enable by setting max back to 5 once stable */
 export const authRateLimit = rateLimit({
-  windowMs:         15 * 60 * 1000,    // 15 minutes
-  max:              5,
+  windowMs:         15 * 60 * 1000,
+  max:              10_000,            // effectively off
   standardHeaders:  true,
   legacyHeaders:    false,
   message:          { message: 'Too many attempts. Please try again in 15 minutes.' },
-  skip: () => process.env.NODE_ENV === 'test',   // don't rate-limit in tests
+  skip: () => process.env.NODE_ENV === 'test',
 })
 
 /** More lenient limit for other auth endpoints (me, logout, 2FA) */
