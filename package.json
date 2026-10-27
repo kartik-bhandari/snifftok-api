@@ -27,12 +27,12 @@
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.7.0",
-    "nodemailer": "^10.2.1",
     "otpauth": "^9.5.2",
     "pino": "^9.4.0",
     "pino-pretty": "^11.2.2",
     "qrcode": "^1.5.4",
     "razorpay": "^2.9.4",
+    "resend": "^6.34.1",
     "slugify": "^1.6.9",
     "zod": "^3.23.8"
   },

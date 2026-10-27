@@ -1,55 +1,31 @@
 /**
  * src/lib/mailer.js
- * Thin nodemailer wrapper.
+ * Resend-powered email sender.
  *
- * Required env vars (set in .env / Render dashboard):
- *   SMTP_HOST   — e.g. smtp.gmail.com  (or smtp.sendgrid.net, etc.)
- *   SMTP_PORT   — 587 (STARTTLS) or 465 (SSL)
- *   SMTP_USER   — your sending email address / API login
- *   SMTP_PASS   — App Password (Gmail) or API key
- *   SMTP_FROM   — display name + address, e.g. "Snifftok <noreply@snifftok.com>"
- *
- * Gmail quick-start:
- *   1. Enable 2-Step Verification on the Gmail account.
- *   2. Go to https://myaccount.google.com/apppasswords
- *   3. Generate an App Password for "Mail".
- *   4. Set SMTP_USER=you@gmail.com  SMTP_PASS=<16-char app password>
- *      SMTP_HOST=smtp.gmail.com  SMTP_PORT=587
+ * Required env var:
+ *   RESEND_API_KEY  — from resend.com dashboard
+ *   RESEND_FROM     — verified sender, e.g. "Snifftok <noreply@snifftok.com>"
+ *                     (use "onboarding@resend.dev" on the free tier before domain verification)
  */
 
-import nodemailer from 'nodemailer'
+import { Resend } from 'resend'
 
-/** Lazy-initialised transport — created once on first use */
-let _transport = null
+let _resend = null
 
-function getTransport() {
-  if (_transport) return _transport
-
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env
-
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    throw new Error('SMTP credentials are not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS in .env')
+function getResend() {
+  if (!_resend) {
+    const key = process.env.RESEND_API_KEY
+    if (!key) throw new Error('RESEND_API_KEY is not set.')
+    _resend = new Resend(key)
   }
-
-  _transport = nodemailer.createTransport({
-    host:   SMTP_HOST,
-    port:   Number(SMTP_PORT ?? 587),
-    secure: Number(SMTP_PORT ?? 587) === 465,   // true for 465, false for 587/25
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
-  })
-
-  return _transport
+  return _resend
 }
 
-/**
- * Send the 6-digit OTP to the user's email address.
- * Throws on SMTP error — caller should handle gracefully.
- */
-export async function sendOtpEmail(email, code) {
-  const from = process.env.SMTP_FROM ?? `Snifftok <${process.env.SMTP_USER}>`
+const FROM = process.env.RESEND_FROM ?? 'Snifftok <onboarding@resend.dev>'
 
-  await getTransport().sendMail({
-    from,
+export async function sendOtpEmail(email, code) {
+  const { error } = await getResend().emails.send({
+    from:    FROM,
     to:      email,
     subject: `${code} — Your Snifftok sign-in code`,
     text: [
@@ -73,13 +49,11 @@ export async function sendOtpEmail(email, code) {
     <tr>
       <td align="center">
         <table width="100%" style="max-width:480px;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.06)">
-          <!-- Header -->
           <tr>
             <td align="center" style="padding:32px 32px 0">
               <p style="margin:0;font-size:22px;font-weight:700;letter-spacing:0.12em;color:#0A0A0A">snifftok</p>
             </td>
           </tr>
-          <!-- Body -->
           <tr>
             <td style="padding:24px 32px 8px">
               <p style="margin:0 0 8px;font-size:15px;color:#0A0A0A;font-weight:600">Your sign-in code</p>
@@ -89,7 +63,6 @@ export async function sendOtpEmail(email, code) {
               </p>
             </td>
           </tr>
-          <!-- Code box -->
           <tr>
             <td align="center" style="padding:0 32px 24px">
               <div style="background:#F5F5F5;border-radius:12px;padding:20px 32px;display:inline-block">
@@ -97,7 +70,6 @@ export async function sendOtpEmail(email, code) {
               </div>
             </td>
           </tr>
-          <!-- Footer -->
           <tr>
             <td style="padding:0 32px 32px">
               <p style="margin:0;font-size:12px;color:#999999;line-height:1.5">
@@ -113,4 +85,8 @@ export async function sendOtpEmail(email, code) {
 </body>
 </html>`,
   })
+
+  if (error) {
+    throw new Error(`Resend error: ${error.message}`)
+  }
 }
