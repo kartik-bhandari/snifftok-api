@@ -14,6 +14,10 @@ const router = Router()
 router.post('/register',  authRateLimit, auth.register)
 router.post('/login',     authRateLimit, auth.login)
 
+// Passwordless OTP login (customers)
+router.post('/otp/send',   authRateLimit, auth.sendOtp)
+router.post('/otp/verify', authRateLimit, auth.verifyOtp)
+
 // Public — uses pendingToken in body (Path A) OR setupOnly session (Path B)
 router.post('/2fa/verify', auth.verify2fa)
 

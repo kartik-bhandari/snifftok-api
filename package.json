@@ -27,6 +27,7 @@
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.7.0",
+    "nodemailer": "^10.2.1",
     "otpauth": "^9.5.2",
     "pino": "^9.4.0",
     "pino-pretty": "^11.2.2",

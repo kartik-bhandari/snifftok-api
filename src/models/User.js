@@ -11,7 +11,7 @@ const twoFactorSchema = new Schema({
 
 const userSchema = new Schema({
   email:             { type: String, required: true, unique: true, lowercase: true, trim: true },
-  passwordHash:      { type: String, required: true, select: false },
+  passwordHash:      { type: String, required: false, select: false },  // absent for OTP-only customers
   name:              { type: String, required: true, trim: true },
   role:              { type: String, enum: ['customer', 'staff', 'admin'], default: 'customer' },
   isActive:          { type: Boolean, default: true },

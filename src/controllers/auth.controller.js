@@ -4,10 +4,13 @@
  */
 
 import bcrypt from 'bcryptjs'
+import crypto from 'crypto'
 import { z } from 'zod'
 import { User } from '../models/User.js'
+import { Otp }  from '../models/Otp.js'
 import { signToken, verifyToken, setCookie, clearCookie } from '../lib/jwt.js'
 import { encrypt, decrypt } from '../lib/crypto.js'
+import { sendOtpEmail } from '../lib/mailer.js'
 import {
   generateSecret,
   generateQRDataUrl,
@@ -164,8 +167,114 @@ export async function login(req, res) {
   // (avoids cross-origin cookie issues on Render's separate subdomains)
   return res.json({ user: user.toSafeObject(), token: adminToken })
 }
+// ─── POST /api/auth/otp/send ─────────────────────────────────────────────────
+// Generates and emails a 6-digit code. Rate-limited at the route level.
+// Always returns 200 — never reveals whether the email exists.
 
-// ─── POST /api/auth/logout ────────────────────────────────────────────────────
+const sendOtpSchema = z.object({
+  email: z.string().email().max(254).toLowerCase(),
+})
+
+export async function sendOtp(req, res) {
+  const parsed = validate(sendOtpSchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ message: 'Validation failed.', errors: parsed.errors })
+
+  const { email } = parsed.data
+
+  // Delete any existing (unused) OTPs for this email before issuing a new one
+  await Otp.deleteMany({ email })
+
+  // Generate a cryptographically random 6-digit code
+  const code     = String(crypto.randomInt(100_000, 999_999))  // 100000–999999
+  const codeHash = await bcrypt.hash(code, 10)
+
+  await Otp.create({
+    email,
+    codeHash,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),  // 10 minutes
+  })
+
+  try {
+    await sendOtpEmail(email, code)
+  } catch (err) {
+    console.error('[mailer] Failed to send OTP email:', err.message)
+    // Still return 200 — don't expose SMTP errors to the client
+  }
+
+  return res.json({ ok: true })
+}
+
+// ─── POST /api/auth/otp/verify ────────────────────────────────────────────────
+// Verifies the code. On success, finds or creates the customer account and
+// issues a session cookie. `name` is only required for brand-new accounts.
+
+const verifyOtpSchema = z.object({
+  email: z.string().email().max(254).toLowerCase(),
+  code:  z.string().length(6).regex(/^\d{6}$/),
+  name:  z.string().min(1).max(100).trim().optional(),
+})
+
+export async function verifyOtp(req, res) {
+  const parsed = validate(verifyOtpSchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ message: 'Validation failed.', errors: parsed.errors })
+
+  const { email, code, name } = parsed.data
+
+  const otpDoc = await Otp.findOne({ email, used: false, expiresAt: { $gt: new Date() } })
+
+  // Generic message — avoids telling attackers whether the email was found
+  const FAIL = { status: 401, message: 'Invalid or expired code. Please request a new one.' }
+
+  if (!otpDoc) return res.status(FAIL.status).json({ message: FAIL.message })
+
+  // Brute-force guard — max 5 wrong guesses per OTP
+  if (otpDoc.attempts >= 5) {
+    await Otp.deleteOne({ _id: otpDoc._id })
+    return res.status(429).json({ message: 'Too many attempts. Please request a new code.' })
+  }
+
+  const codeOk = await bcrypt.compare(code, otpDoc.codeHash)
+
+  if (!codeOk) {
+    otpDoc.attempts += 1
+    await otpDoc.save()
+    return res.status(FAIL.status).json({ message: FAIL.message })
+  }
+
+  // Mark as used (TTL will delete it automatically within 10 min)
+  otpDoc.used = true
+  await otpDoc.save()
+
+  // Find or create the customer account
+  let user = await User.findOne({ email }).select('+sessionVersion')
+  const isNew = !user
+
+  if (isNew) {
+    // New user — name is required
+    if (!name?.trim()) {
+      return res.status(422).json({ message: 'Name is required to create your account.', needsName: true })
+    }
+    user = await User.create({
+      email,
+      name:         name.trim(),
+      role:         'customer',
+      // passwordHash intentionally omitted — OTP-only customer account
+      sessionVersion: 0,
+    })
+  }
+
+  if (!user.isActive) {
+    return res.status(403).json({ message: 'This account has been deactivated.' })
+  }
+
+  user.sessionVersion = (user.sessionVersion ?? 0) + 1
+  user.lastLoginAt    = new Date()
+  await user.save()
+
+  issueSessionCookie(res, user)
+  return res.status(isNew ? 201 : 200).json({ user: user.toSafeObject(), isNew })
+}
+
 
 export async function logout(req, res) {
   // Bump sessionVersion to invalidate all existing tokens for this user
