@@ -248,13 +248,19 @@ export async function verifyOtp(req, res) {
     return res.status(FAIL.status).json({ message: FAIL.message })
   }
 
-  // Mark as used (TTL will delete it automatically within 10 min)
-  otpDoc.used = true
-  await otpDoc.save()
-
   // Find or create the customer account
   let user = await User.findOne({ email }).select('+sessionVersion')
   const isNew = !user
+
+  // New user without a name — ask for it WITHOUT consuming the code, so the
+  // follow-up request (same code + name) can still succeed.
+  if (isNew && !name?.trim()) {
+    return res.status(422).json({ message: 'Name is required to create your account.', needsName: true })
+  }
+
+  // Mark as used (TTL will delete it automatically within 10 min)
+  otpDoc.used = true
+  await otpDoc.save()
 
   // OTP is customer-only — admin/staff must use password + 2FA via the admin panel,
   // otherwise access to the admin's inbox alone would bypass 2FA.
@@ -266,10 +272,6 @@ export async function verifyOtp(req, res) {
   }
 
   if (isNew) {
-    // New user — name is required
-    if (!name?.trim()) {
-      return res.status(422).json({ message: 'Name is required to create your account.', needsName: true })
-    }
     user = await User.create({
       email,
       name:         name.trim(),

@@ -377,6 +377,33 @@ describe('POST /api/auth/otp/verify', () => {
     expect(getCookie(res)).toBeTruthy()
   })
 
+  it('new email: asks for a name without consuming the code, then signs up with the same code', async () => {
+    const code = await issueOtp('new@test.com')
+
+    const first = await post('/api/auth/otp/verify', { email: 'new@test.com', code })
+    expect(first.status).toBe(422)
+    expect(first.body.needsName).toBe(true)
+    expect(getCookie(first)).toBeNull()
+    expect(await User.exists({ email: 'new@test.com' })).toBeNull()
+
+    const second = await post('/api/auth/otp/verify', { email: 'new@test.com', code, name: 'Riya' })
+    expect(second.status).toBe(201)
+    expect(second.body.isNew).toBe(true)
+    expect(second.body.user.name).toBe('Riya')
+    expect(getCookie(second)).toBeTruthy()
+
+    // Code is single-use once sign-in succeeds
+    const replay = await post('/api/auth/otp/verify', { email: 'new@test.com', code, name: 'Riya' })
+    expect(replay.status).toBe(401)
+  })
+
+  it('new email: a wrong code never reaches the name step', async () => {
+    await issueOtp('new@test.com', '123456')
+    const res = await post('/api/auth/otp/verify', { email: 'new@test.com', code: '654321' })
+    expect(res.status).toBe(401)
+    expect(res.body.needsName).toBeUndefined()
+  })
+
   it.each(['admin', 'staff'])('rejects %s accounts — no session issued, 2FA cannot be bypassed', async (role) => {
     await createUser({ email: `${role}@test.com`, role })
     const code = await issueOtp(`${role}@test.com`)
