@@ -4,15 +4,20 @@
  * Uses MongoMemoryServer (via setup.js) and supertest.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import request from 'supertest'
 import bcrypt from 'bcryptjs'
 import { User } from '../models/User.js'
+import { Otp } from '../models/Otp.js'
+import { sendOtpEmail } from '../lib/mailer.js'
 import app from '../app.js'
 import { signToken } from '../lib/jwt.js'
 import { generateSecret, verifyTOTP } from '../lib/totp.js'
 import { encrypt } from '../lib/crypto.js'
 import { config } from '../config/index.js'
+
+// Never send real email from tests
+vi.mock('../lib/mailer.js', () => ({ sendOtpEmail: vi.fn().mockResolvedValue() }))
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -186,16 +191,23 @@ describe('Admin login — two-step 2FA', () => {
     expect(res.status).toBe(401)
   })
 
-  it('admin without 2FA gets needs2faSetup=true and a setupOnly cookie', async () => {
-    const noTfaAdmin = await User.create({
+  it('admin without 2FA gets a full session and a Bearer token (2FA optional)', async () => {
+    await User.create({
       email: 'notfa@test.com', name: 'No 2FA', role: 'admin',
       passwordHash: await bcrypt.hash('AdminPass1!', 12),
       sessionVersion: 0, isActive: true,
     })
     const res = await post('/api/auth/login', { email: 'notfa@test.com', password: 'AdminPass1!' })
     expect(res.status).toBe(200)
-    expect(res.body.needs2faSetup).toBe(true)
-    expect(getCookie(res)).toBeTruthy()  // setupOnly cookie is set
+    expect(res.body.requires2fa).toBeUndefined()
+    expect(res.body.user.role).toBe('admin')
+    expect(res.body.token).toBeTruthy()  // admin SPA uses Bearer auth
+    expect(getCookie(res)).toBeTruthy()
+
+    // The token is a real session, not a setupOnly one
+    const me = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${res.body.token}`)
+    expect(me.status).toBe(200)
+    expect(me.body.needs2faSetup).toBeUndefined()
   })
 })
 
@@ -341,5 +353,69 @@ describe('Cookie attributes', () => {
     const rawCookie = getCookie(res) ?? ''
     // Max-Age in seconds: 30 * 24 * 3600 = 2592000
     expect(rawCookie).toContain('Max-Age=2592000')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('POST /api/auth/otp/verify', () => {
+  /** Store a known OTP directly so no email is sent */
+  async function issueOtp(email, code = '123456') {
+    await Otp.create({
+      email,
+      codeHash: await bcrypt.hash(code, 10),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    })
+    return code
+  }
+
+  it('signs in an existing customer with a valid code', async () => {
+    await createUser({ email: 'customer@test.com', role: 'customer' })
+    const code = await issueOtp('customer@test.com')
+    const res = await post('/api/auth/otp/verify', { email: 'customer@test.com', code })
+    expect(res.status).toBe(200)
+    expect(res.body.user.role).toBe('customer')
+    expect(getCookie(res)).toBeTruthy()
+  })
+
+  it.each(['admin', 'staff'])('rejects %s accounts — no session issued, 2FA cannot be bypassed', async (role) => {
+    await createUser({ email: `${role}@test.com`, role })
+    const code = await issueOtp(`${role}@test.com`)
+    const res = await post('/api/auth/otp/verify', { email: `${role}@test.com`, code })
+    expect(res.status).toBe(403)
+    expect(res.body.useAdminPanel).toBe(true)
+    expect(getCookie(res)).toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('POST /api/auth/otp/send', () => {
+  beforeEach(() => vi.mocked(sendOtpEmail).mockClear())
+
+  it('emails a code to a customer', async () => {
+    await createUser({ email: 'customer@test.com', role: 'customer' })
+    const res = await post('/api/auth/otp/send', { email: 'customer@test.com' })
+    expect(res.status).toBe(200)
+    expect(sendOtpEmail).toHaveBeenCalledWith('customer@test.com', expect.stringMatching(/^\d{6}$/))
+    expect(await Otp.countDocuments({ email: 'customer@test.com' })).toBe(1)
+  })
+
+  it('emails a code to a brand-new email (sign-up)', async () => {
+    const res = await post('/api/auth/otp/send', { email: 'new@test.com' })
+    expect(res.status).toBe(200)
+    expect(sendOtpEmail).toHaveBeenCalledOnce()
+  })
+
+  it('does not flag customers or new emails for the admin panel', async () => {
+    const res = await post('/api/auth/otp/send', { email: 'new@test.com' })
+    expect(res.body).toEqual({ ok: true })
+  })
+
+  it.each(['admin', 'staff'])('sends no code to %s accounts — points them to the admin panel', async (role) => {
+    await createUser({ email: `${role}@test.com`, role })
+    const res = await post('/api/auth/otp/send', { email: `${role}@test.com` })
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ ok: true, useAdminPanel: true })
+    expect(sendOtpEmail).not.toHaveBeenCalled()
+    expect(await Otp.countDocuments({ email: `${role}@test.com` })).toBe(0)
   })
 })

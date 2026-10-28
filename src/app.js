@@ -29,7 +29,9 @@ const corsOptions = {
     if (!origin) return callback(null, true)
     if (config.clientOrigins.includes(origin)) return callback(null, true)
     console.warn(`[CORS] Rejected origin: ${origin} | Allowed: ${config.clientOrigins.join(', ')}`)
-    callback(new Error(`CORS: origin ${origin} not allowed`))
+    // No CORS headers (browser blocks the response) — don't throw, or the global
+    // error handler turns it into a 500 before csrfProtection can return a 403
+    callback(null, false)
   },
   credentials:    true,
   allowedHeaders: ['Content-Type', 'X-Requested-With', 'Authorization', 'X-CSRF-Token'],

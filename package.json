@@ -10,6 +10,7 @@
     "seed": "node src/scripts/seedAdmin.js",
     "seed:categories": "node src/scripts/seedCategories.js",
     "seed:all": "npm run seed && npm run seed:categories",
+    "change-email": "node src/scripts/changeEmail.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

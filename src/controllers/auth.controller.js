@@ -181,6 +181,14 @@ export async function sendOtp(req, res) {
 
   const { email } = parsed.data
 
+  // OTP is customer-only — admin/staff get no code and the storefront sends
+  // them to the admin panel instead. Trade-off: this reveals that the email
+  // belongs to a staff/admin account (the admin panel still needs password + 2FA).
+  const existing = await User.findOne({ email }).select('role')
+  if (existing && existing.role !== 'customer') {
+    return res.json({ ok: true, useAdminPanel: true })
+  }
+
   // Delete any existing (unused) OTPs for this email before issuing a new one
   await Otp.deleteMany({ email })
 
@@ -194,12 +202,11 @@ export async function sendOtp(req, res) {
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),  // 10 minutes
   })
 
-  try {
-    await sendOtpEmail(email, code)
-  } catch (err) {
+  // Not awaited — respond immediately; failures are logged only,
+  // don't expose mail errors to the client.
+  sendOtpEmail(email, code).catch(err => {
     console.error('[mailer] Failed to send OTP email:', err.message)
-    // Still return 200 — don't expose SMTP errors to the client
-  }
+  })
 
   return res.json({ ok: true })
 }
@@ -248,6 +255,15 @@ export async function verifyOtp(req, res) {
   // Find or create the customer account
   let user = await User.findOne({ email }).select('+sessionVersion')
   const isNew = !user
+
+  // OTP is customer-only — admin/staff must use password + 2FA via the admin panel,
+  // otherwise access to the admin's inbox alone would bypass 2FA.
+  if (user && user.role !== 'customer') {
+    return res.status(403).json({
+      message: 'Staff and admin accounts must sign in through the admin panel.',
+      useAdminPanel: true,
+    })
+  }
 
   if (isNew) {
     // New user — name is required
