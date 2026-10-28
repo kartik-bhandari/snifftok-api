@@ -93,8 +93,23 @@ describe('GET /api/admin/dashboard/summary', () => {
     expect(res.body.bucket).toBe('hour')
   })
 
+  it('finds the cost for storefront orders saved without a SKU (by product + size, then name + size)', async () => {
+    const product = await Product.findOne({ name: 'Oud Royale' })
+    // Old storefront checkout sent sku: "" and no productId
+    await createOrder({ items: [bottle(1, { sku: '', productId: product._id })] })            // profit ₹500
+    await createOrder({ items: [bottle(1, { sku: '', name: 'oud royale' })] })                // profit ₹500
+    await createOrder({ items: [{
+      name: 'Oud Royale', sku: '', variantType: 'tester', sizeMl: 2,
+      unitPrice: 20000, quantity: 2, lineTotal: 40000,                                         // profit ₹200
+    }] })
+
+    const res = await get('/api/admin/dashboard/summary', adminToken)
+    expect(res.body.profitMissingCost).toBe(0)
+    expect(res.body.netProfit).toBe(50000 + 50000 + 20000)
+  })
+
   it('flags lines whose cost cannot be found instead of counting them as pure profit', async () => {
-    await createOrder({ items: [bottle(1, { sku: 'GONE-1' })] })
+    await createOrder({ items: [bottle(1, { sku: 'GONE-1', name: 'Deleted Perfume' })] })
     const res = await get('/api/admin/dashboard/summary', adminToken)
     expect(res.body.netProfit).toBe(0)
     expect(res.body.profitMissingCost).toBe(1)
@@ -185,6 +200,19 @@ describe('Order unit cost', () => {
       .get(`/api/storefront/orders/lookup?email=riya@test.com&orderNumber=${created.body.orderNumber}`)
     expect(lookup.status).toBe(200)
     expect(lookup.body.data.items[0].unitCost).toBeUndefined()
+  })
+
+  it('snapshots cost from product + size when an older cart sends no SKU', async () => {
+    const product = await createProduct()
+    const created = await request(app)
+      .post('/api/storefront/orders')
+      .set('Content-Type', 'application/json')
+      .set('X-Requested-With', 'snifftok-web')
+      .send({ ...orderBody, items: [bottle(1, { sku: undefined, productId: product._id.toString() })] })
+    expect(created.status).toBe(201)
+
+    const saved = await Order.findById(created.body.orderId).lean()
+    expect(saved.items[0].unitCost).toBe(100000)
   })
 
   it('shows cost to admins but not staff on admin order endpoints', async () => {

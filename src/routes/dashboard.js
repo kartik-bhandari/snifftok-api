@@ -12,7 +12,7 @@
 import { Router } from 'express'
 import { Order } from '../models/Order.js'
 import { Product } from '../models/Product.js'
-import { getUnitCosts } from '../lib/orderCosts.js'
+import { getCostResolver } from '../lib/orderCosts.js'
 
 export const dashboardRouter = Router()
 
@@ -79,9 +79,9 @@ dashboardRouter.get('/summary', async (req, res) => {
 
     // Older orders have no unitCost snapshot — fall back to the current cost price
     const fallback = isAdmin
-      ? await getUnitCosts(all.flatMap(o => o.items.filter(i => i.unitCost == null).map(i => i.sku)))
-      : new Map()
-    const costOf = (item) => item.unitCost ?? fallback.get(item.sku?.toUpperCase())
+      ? await getCostResolver(all.flatMap(o => o.items.filter(i => i.unitCost == null)))
+      : () => undefined
+    const costOf = (item) => item.unitCost ?? fallback(item)
 
     const current  = all.filter(o => o.createdAt >= start)
     const previous = all.filter(o => o.createdAt >= prevStart && o.createdAt <= prevEnd)

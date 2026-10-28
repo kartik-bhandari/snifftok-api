@@ -9,7 +9,7 @@
 import { Router } from 'express'
 import { Order } from '../models/Order.js'
 import { requireAuth } from '../middleware/auth.js'
-import { getUnitCosts } from '../lib/orderCosts.js'
+import { getCostResolver } from '../lib/orderCosts.js'
 
 // Cost prices are admin-only — never return them on storefront endpoints
 const CUSTOMER_FIELDS = '-items.unitCost'
@@ -101,10 +101,10 @@ storefrontOrdersRouter.post('/', async (req, res) => {
     }
 
     // Snapshot cost at time of sale (server-side only — ignore any client value)
-    const costs = await getUnitCosts(items.map(i => i.sku))
+    const costOf = await getCostResolver(items)
     const itemsWithCost = items.map(({ unitCost, ...item }) => ({ // eslint-disable-line no-unused-vars
       ...item,
-      unitCost: costs.get(item.sku?.toUpperCase()),
+      unitCost: costOf(item),
     }))
 
     const order = new Order({
