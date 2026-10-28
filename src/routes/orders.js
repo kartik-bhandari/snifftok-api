@@ -9,6 +9,10 @@
 import { Router } from 'express'
 import { Order } from '../models/Order.js'
 import { requireAuth } from '../middleware/auth.js'
+import { getUnitCosts } from '../lib/orderCosts.js'
+
+// Cost prices are admin-only — never return them on storefront endpoints
+const CUSTOMER_FIELDS = '-items.unitCost'
 
 // ─── Storefront router (public) ───────────────────────────────────────────────
 export const storefrontOrdersRouter = Router()
@@ -27,6 +31,7 @@ storefrontOrdersRouter.get('/mine', requireAuth, async (req, res) => {
         { 'customer.email': req.user.email.toLowerCase() },
       ],
     })
+      .select(CUSTOMER_FIELDS)
       .sort({ createdAt: -1 })
       .lean()
     res.json({ data: orders })
@@ -49,7 +54,7 @@ storefrontOrdersRouter.get('/lookup', async (req, res) => {
     const order = await Order.findOne({
       orderNumber,
       'customer.email': email.toLowerCase().trim(),
-    }).lean()
+    }).select(CUSTOMER_FIELDS).lean()
     if (!order) return res.status(404).json({ message: 'Order not found. Check your email and order number.' })
     res.json({ data: order })
   } catch (err) {
@@ -95,10 +100,18 @@ storefrontOrdersRouter.post('/', async (req, res) => {
       return res.status(400).json({ message: 'subtotal and total must be numbers (paise).' })
     }
 
+    // Snapshot cost at time of sale (server-side only — ignore any client value)
+    const costs = await getUnitCosts(items.map(i => i.sku))
+    const itemsWithCost = items.map(({ unitCost, ...item }) => ({ // eslint-disable-line no-unused-vars
+      ...item,
+      unitCost: costs.get(item.sku?.toUpperCase()),
+    }))
+
     const order = new Order({
       customer: { ...customer, email: customer.email.toLowerCase().trim() },
       address,
-      items,
+      items: itemsWithCost,
+      channel: 'web',
       subtotal,
       shippingAmount: shippingAmount ?? 0,
       total,
@@ -120,6 +133,9 @@ storefrontOrdersRouter.post('/', async (req, res) => {
 
 // ─── Admin router (protected) ─────────────────────────────────────────────────
 export const adminOrdersRouter = Router()
+
+/** Staff can manage orders but not see cost prices */
+const adminFields = (req) => (req.user.role === 'admin' ? '' : CUSTOMER_FIELDS)
 
 /**
  * GET /api/admin/orders
@@ -144,7 +160,7 @@ adminOrdersRouter.get('/', async (req, res) => {
     }
 
     const [orders, total] = await Promise.all([
-      Order.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Order.find(filter).select(adminFields(req)).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Order.countDocuments(filter),
     ])
 
@@ -158,7 +174,7 @@ adminOrdersRouter.get('/', async (req, res) => {
 /** GET /api/admin/orders/:id */
 adminOrdersRouter.get('/:id', async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).lean()
+    const order = await Order.findById(req.params.id).select(adminFields(req)).lean()
     if (!order) return res.status(404).json({ message: 'Order not found.' })
     res.json(order)
   } catch (err) {
@@ -179,7 +195,7 @@ adminOrdersRouter.patch('/:id/status', async (req, res) => {
       req.params.id,
       { status },
       { new: true, runValidators: true },
-    ).lean()
+    ).select(adminFields(req)).lean()
     if (!order) return res.status(404).json({ message: 'Order not found.' })
     res.json(order)
   } catch (err) {

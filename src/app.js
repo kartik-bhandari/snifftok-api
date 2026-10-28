@@ -18,6 +18,7 @@ import pricingRouter    from './routes/pricing.js'
 import uploadsRouter    from './routes/uploads.js'
 import storefrontRouter from './routes/storefront.js'
 import { storefrontOrdersRouter, adminOrdersRouter } from './routes/orders.js'
+import { dashboardRouter } from './routes/dashboard.js'
 import { requireAuth, requireAdminOrStaff, requireAdmin } from './middleware/auth.js'
 
 const app = express()
@@ -73,6 +74,7 @@ app.use('/api/admin/categories', requireAuth, requireAdminOrStaff, categoriesRou
 app.use('/api/admin/pricing',    requireAuth, requireAdminOrStaff, pricingRouter)
 app.use('/api/admin/uploads',    requireAuth, requireAdminOrStaff, uploadsRouter)
 app.use('/api/admin/orders',     requireAuth, requireAdminOrStaff, adminOrdersRouter)
+app.use('/api/admin/dashboard',  requireAuth, requireAdminOrStaff, dashboardRouter)
 
 // Admin-only sub-routes (settings, reports, users)
 const adminOnlyPaths = ['/api/admin/settings', '/api/admin/reports', '/api/admin/staff']

@@ -17,6 +17,9 @@ const orderItemSchema = new mongoose.Schema(
     sizeMl:      { type: Number, required: true },
     image:       { type: String },        // URL for display in admin
     unitPrice:   { type: Number, required: true, min: 0 },  // paise
+    // Cost at time of sale — set server-side from the variant's costPrice so
+    // profit reports don't change when cost prices are edited later. Admin-only.
+    unitCost:    { type: Number, min: 0 },                  // paise
     quantity:    { type: Number, required: true, min: 1 },
     lineTotal:   { type: Number, required: true, min: 0 },  // paise
   },
@@ -51,6 +54,8 @@ const orderSchema = new mongoose.Schema(
       enum:    ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'],
       default: 'pending',
     },
+    // Where the order came from — storefront checkout, WhatsApp, or entered by staff
+    channel: { type: String, enum: ['web', 'whatsapp', 'admin'], default: 'web' },
     notes:  { type: String, trim: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },  // optional
   },
@@ -70,6 +75,7 @@ orderSchema.pre('save', async function () {
 })
 
 orderSchema.index({ status: 1, createdAt: -1 })
+orderSchema.index({ createdAt: -1 })
 orderSchema.index({ 'customer.email': 1 })
 
 export const Order = mongoose.model('Order', orderSchema)
