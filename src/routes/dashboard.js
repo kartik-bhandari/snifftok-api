@@ -2,7 +2,7 @@
  * src/routes/dashboard.js
  * Admin dashboard data.
  *
- *   GET /api/admin/dashboard/summary?period=today|7d|30d
+ *   GET /api/admin/dashboard/summary?period=today|7d|30d|fy|lifetime
  *   GET /api/admin/dashboard/attention
  *
  * MONEY: paise. Profit is admin-only — netProfit is null for staff.
@@ -21,16 +21,73 @@ const DAY        = 24 * HOUR
 const IST_OFFSET = 330 * 60 * 1000
 
 const PERIOD_DAYS = { today: 1, '7d': 7, '30d': 30 }
+const PERIODS     = [...Object.keys(PERIOD_DAYS), 'fy', 'lifetime']
+
+/** Long ranges chart by month; up to this many days they chart by day */
+const MAX_DAILY_DAYS = 62
 
 /** Midnight IST (as a UTC Date) of the day containing `date` */
 function istDayStart(date) {
   return new Date(Math.floor((date.getTime() + IST_OFFSET) / DAY) * DAY - IST_OFFSET)
 }
 
-/** Bucket key in IST — "2026-10-28" (day) or "2026-10-28T14" (hour) */
+/** Bucket key in IST — "2026-10-28T14" (hour), "2026-10-28" (day) or "2026-10" (month) */
 function istKey(date, bucket) {
   const iso = new Date(date.getTime() + IST_OFFSET).toISOString()
-  return bucket === 'hour' ? iso.slice(0, 13) : iso.slice(0, 10)
+  return bucket === 'hour' ? iso.slice(0, 13) : bucket === 'month' ? iso.slice(0, 7) : iso.slice(0, 10)
+}
+
+/** Every bucket key from `start` to `now`, in order */
+function bucketKeys(start, now, bucket) {
+  const keys = []
+  if (bucket === 'month') {
+    const [sy, sm] = istKey(start, 'month').split('-').map(Number)
+    const [ey, em] = istKey(now, 'month').split('-').map(Number)
+    for (let y = sy, m = sm; y < ey || (y === ey && m <= em); m === 12 ? (y++, m = 1) : m++) {
+      keys.push(`${y}-${String(m).padStart(2, '0')}`)
+    }
+    return keys
+  }
+  const step = bucket === 'hour' ? HOUR : DAY
+  for (let t = start.getTime(); t <= now.getTime(); t += step) keys.push(istKey(new Date(t), bucket))
+  return keys
+}
+
+/**
+ * Date range for a period. `previous` is the same-length range just before,
+ * ending at the same point in time — so "today so far" is compared with
+ * "yesterday up to this time". Lifetime has no previous range.
+ */
+async function periodRange(period, now) {
+  if (PERIOD_DAYS[period]) {
+    const days  = PERIOD_DAYS[period]
+    const start = new Date(istDayStart(now).getTime() - (days - 1) * DAY)
+    return {
+      start,
+      bucket:   period === 'today' ? 'hour' : 'day',
+      label:    null,
+      previous: { start: new Date(start.getTime() - days * DAY), end: new Date(now.getTime() - days * DAY) },
+    }
+  }
+
+  let start, label, previous = null
+  if (period === 'fy') {
+    // Indian financial year: 1 April – 31 March (IST)
+    const [y, m] = istKey(now, 'month').split('-').map(Number)
+    const fyYear = m >= 4 ? y : y - 1
+    start = new Date(Date.UTC(fyYear, 3, 1) - IST_OFFSET)
+    const prevStart = new Date(Date.UTC(fyYear - 1, 3, 1) - IST_OFFSET)
+    previous = { start: prevStart, end: new Date(now.getTime() - (start - prevStart)) }
+    label = `FY ${fyYear}–${String(fyYear + 1).slice(2)}`
+  } else {
+    // Lifetime — from the day of the first order
+    const first = await Order.findOne({ status: { $ne: 'cancelled' } }).sort({ createdAt: 1 }).select('createdAt').lean()
+    start = istDayStart(first?.createdAt ?? now)
+    label = first ? `Since ${istKey(first.createdAt, 'day')}` : null
+  }
+
+  const spanDays = (now - start) / DAY
+  return { start, bucket: spanDays <= MAX_DAILY_DAYS ? 'day' : 'month', label, previous }
 }
 
 /** Totals for a list of orders. `costOf(item)` returns paise or undefined. */
@@ -58,21 +115,15 @@ function totals(orders, costOf) {
 
 dashboardRouter.get('/summary', async (req, res) => {
   try {
-    const period = PERIOD_DAYS[req.query.period] ? req.query.period : '7d'
-    const days   = PERIOD_DAYS[period]
-    const bucket = period === 'today' ? 'hour' : 'day'
+    const period  = PERIODS.includes(req.query.period) ? req.query.period : '7d'
     const isAdmin = req.user.role === 'admin'
 
-    const now       = new Date()
-    const start     = new Date(istDayStart(now).getTime() - (days - 1) * DAY)
-    // Previous period: same length, ending at the same point in time — so
-    // "today so far" is compared with "yesterday up to this time".
-    const prevStart = new Date(start.getTime() - days * DAY)
-    const prevEnd   = new Date(now.getTime() - days * DAY)
+    const now = new Date()
+    const { start, bucket, label, previous: prevRange } = await periodRange(period, now)
 
     const all = await Order.find({
       status:    { $ne: 'cancelled' },
-      createdAt: { $gte: prevStart, $lte: now },
+      createdAt: { $gte: prevRange?.start ?? start, $lte: now },
     })
       .select('total items createdAt channel')
       .lean()
@@ -84,17 +135,15 @@ dashboardRouter.get('/summary', async (req, res) => {
     const costOf = (item) => item.unitCost ?? fallback(item)
 
     const current  = all.filter(o => o.createdAt >= start)
-    const previous = all.filter(o => o.createdAt >= prevStart && o.createdAt <= prevEnd)
+    const previous = prevRange
+      ? all.filter(o => o.createdAt >= prevRange.start && o.createdAt <= prevRange.end)
+      : null
 
     const cur  = totals(current, costOf)
-    const prev = totals(previous, costOf)
+    const prev = previous && totals(previous, costOf)
 
     // ── Chart — every bucket present, zero-filled ────────────────────────────
-    const chart = new Map()
-    const step  = bucket === 'hour' ? HOUR : DAY
-    for (let t = start.getTime(); t <= now.getTime(); t += step) {
-      chart.set(istKey(new Date(t), bucket), { date: istKey(new Date(t), bucket), revenue: 0, netProfit: 0 })
-    }
+    const chart = new Map(bucketKeys(start, now, bucket).map(k => [k, { date: k, revenue: 0, netProfit: 0 }]))
 
     // ── Channels + top products ──────────────────────────────────────────────
     const byChannel = { web: 0, whatsapp: 0, admin: 0 }
@@ -130,18 +179,19 @@ dashboardRouter.get('/summary', async (req, res) => {
       .slice(0, 5)
 
     const hideProfit = (t) => ({ ...t, netProfit: isAdmin ? t.netProfit : null })
-    const { missingCost, ...curTotals } = cur
-    const { missingCost: _m, ...prevTotals } = prev // eslint-disable-line no-unused-vars
+    const withoutMissing = ({ missingCost: _m, ...t }) => t // eslint-disable-line no-unused-vars
 
     res.json({
       period,
       bucket,
-      ...hideProfit(curTotals),
+      label,
+      rangeStart: start,
+      ...hideProfit(withoutMissing(cur)),
       // Lines whose cost price couldn't be found — profit leaves them out
-      profitMissingCost: isAdmin ? missingCost : 0,
+      profitMissingCost: isAdmin ? cur.missingCost : 0,
       byChannel,
       chartData: [...chart.values()].map(p => ({ ...p, netProfit: isAdmin ? p.netProfit : null })),
-      previous:  hideProfit(prevTotals),
+      previous:  prev ? hideProfit(withoutMissing(prev)) : null,   // null for lifetime
       topProducts,
     })
   } catch (err) {

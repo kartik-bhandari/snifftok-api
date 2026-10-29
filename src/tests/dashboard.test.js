@@ -125,6 +125,54 @@ describe('GET /api/admin/dashboard/summary', () => {
     expect(res.body.previous.orders).toBe(1)
   })
 
+  it('financial year: counts orders since 1 April IST and compares with the previous FY', async () => {
+    // FY start computed the same way as the API (IST = UTC+5:30)
+    const IST = 330 * 60 * 1000
+    const ist = new Date(Date.now() + IST)
+    const fyYear = ist.getUTCMonth() >= 3 ? ist.getUTCFullYear() : ist.getUTCFullYear() - 1
+    const fyStart     = Date.UTC(fyYear, 3, 1) - IST
+    const prevFyStart = Date.UTC(fyYear - 1, 3, 1) - IST
+
+    await createOrder({ items: [bottle(1)] })                                              // this FY
+    await createOrder({ items: [bottle(2)], createdAt: new Date(fyStart - 60 * 1000) })    // 31 March — last FY
+    await createOrder({ items: [bottle(3)], createdAt: new Date(prevFyStart + 60 * 1000) }) // early last FY
+
+    const res = await get('/api/admin/dashboard/summary?period=fy', adminToken)
+    expect(res.status).toBe(200)
+    expect(res.body.period).toBe('fy')
+    expect(res.body.label).toBe(`FY ${fyYear}–${String(fyYear + 1).slice(2)}`)
+    expect(res.body.revenue).toBe(150000)
+    expect(res.body.orders).toBe(1)
+    // Previous FY up to the same point — includes the early order, not the 31 March one
+    // (unless we're within a minute of the FY start, which the test ignores)
+    expect(res.body.previous.revenue).toBe(450000)
+    expect(['day', 'month']).toContain(res.body.bucket)
+  })
+
+  it('lifetime: everything since the first order, monthly chart, no comparison', async () => {
+    await createOrder({ items: [bottle(1)] })
+    await createOrder({ items: [bottle(2)], createdAt: new Date(Date.now() - 400 * DAY) })
+    await createOrder({ items: [bottle(9)], status: 'cancelled', createdAt: new Date(Date.now() - 800 * DAY) })
+
+    const res = await get('/api/admin/dashboard/summary?period=lifetime', adminToken)
+    expect(res.status).toBe(200)
+    expect(res.body.revenue).toBe(450000)
+    expect(res.body.orders).toBe(2)
+    expect(res.body.previous).toBeNull()
+    expect(res.body.bucket).toBe('month')
+    expect(res.body.chartData.length).toBeGreaterThanOrEqual(13)   // ~400 days of months, cancelled order ignored
+    expect(res.body.chartData.length).toBeLessThanOrEqual(15)
+    expect(res.body.chartData.at(-1).revenue).toBe(150000)
+    expect(res.body.chartData[0].revenue).toBe(300000)
+  })
+
+  it('lifetime: a new store charts by day', async () => {
+    await createOrder({ items: [bottle(1)], createdAt: new Date(Date.now() - 3 * DAY) })
+    const res = await get('/api/admin/dashboard/summary?period=lifetime', adminToken)
+    expect(res.body.bucket).toBe('day')
+    expect(res.body.chartData.length).toBeGreaterThanOrEqual(4)
+  })
+
   it('ranks top products by revenue', async () => {
     await createOrder({ items: [
       bottle(2),
