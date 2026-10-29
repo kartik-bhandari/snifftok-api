@@ -14,6 +14,7 @@ import { StockMovement } from '../models/StockMovement.js'
 import { loadSettings }  from '../models/Settings.js'
 import { deleteImages }  from '../lib/cloudinary.js'
 import { unitPriceExclDelivery } from '../lib/pricing.js'
+import { isActiveCategory } from './categories.controller.js'
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ const variantSchema = z.object({
 const productWriteSchema = z.object({
   name:          z.string().trim().min(1).max(200),
   brand:         z.string().trim().max(100).optional(),
-  categoryId:    z.string().regex(/^[a-f\d]{24}$/i).optional().nullable(),
+  categoryId:    z.string({ required_error: 'Category is required.' }).regex(/^[a-f\d]{24}$/i, 'Category is required.'),
   description:   z.string().max(2000).optional(),
   notes: z.object({
     top:   z.array(z.string().trim()).default([]),
@@ -95,7 +96,10 @@ function buildQuery(q) {
   const filter = {}
 
   if (q.search) {
-    filter.$text = { $search: q.search }
+    // Partial, case-insensitive match ("ou" finds "Oud Ember") — $text only
+    // matches whole words, which is awkward for search-as-you-type
+    const re = new RegExp(String(q.search).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+    filter.$or = [{ name: re }, { brand: re }, { 'variants.sku': re }]
   }
   if (q.category) {
     filter.categoryId = q.category
@@ -184,6 +188,10 @@ export async function createProduct(req, res) {
 
     const data = parsed.data
 
+    if (!(await isActiveCategory(data.categoryId))) {
+      return res.status(400).json({ message: 'Choose one of the 5 categories.', errors: { categoryId: ['Choose one of the 5 categories.'] } })
+    }
+
     // Check SKU uniqueness within the form
     const skus = data.variants.map(v => v.sku)
     if (new Set(skus).size !== skus.length) {
@@ -245,6 +253,13 @@ export async function updateProduct(req, res) {
       }
 
       const data = parsed.data
+
+      if (!(await isActiveCategory(data.categoryId))) {
+        const err = new Error('validation')
+        err.status = 400
+        err.errors = { categoryId: ['Choose one of the 5 categories.'] }
+        throw err
+      }
 
       // SKU uniqueness check (exclude this product's own SKUs)
       const skus = data.variants.map(v => v.sku)

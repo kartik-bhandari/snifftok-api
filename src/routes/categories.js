@@ -1,9 +1,9 @@
 import { Router } from 'express'
-import { listCategories, createCategory } from '../controllers/categories.controller.js'
+import { listCategories } from '../controllers/categories.controller.js'
 
 const router = Router()
 
-router.get('/',  listCategories)
-router.post('/', createCategory)
+// Read-only — the 5 scent families are managed by `npm run seed:categories`
+router.get('/', listCategories)
 
 export default router
