@@ -19,6 +19,7 @@ import uploadsRouter    from './routes/uploads.js'
 import storefrontRouter from './routes/storefront.js'
 import { storefrontOrdersRouter, adminOrdersRouter } from './routes/orders.js'
 import { dashboardRouter } from './routes/dashboard.js'
+import { inventoryRouter } from './routes/inventory.js'
 import { adminEventSectionRouter, storefrontEventSectionRouter } from './routes/eventSection.js'
 import { requireAuth, requireAdminOrStaff, requireAdmin } from './middleware/auth.js'
 
@@ -77,6 +78,7 @@ app.use('/api/admin/pricing',    requireAuth, requireAdminOrStaff, pricingRouter
 app.use('/api/admin/uploads',    requireAuth, requireAdminOrStaff, uploadsRouter)
 app.use('/api/admin/orders',     requireAuth, requireAdminOrStaff, adminOrdersRouter)
 app.use('/api/admin/dashboard',  requireAuth, requireAdminOrStaff, dashboardRouter)
+app.use('/api/admin/inventory',  requireAuth, requireAdminOrStaff, inventoryRouter)
 
 // Storefront event/offer section — admin only (lives under settings)
 app.use('/api/admin/settings/event-section', requireAuth, requireAdmin, adminEventSectionRouter)
