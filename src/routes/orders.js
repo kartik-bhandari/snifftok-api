@@ -9,7 +9,8 @@
 import { Router } from 'express'
 import { Order } from '../models/Order.js'
 import { requireAuth } from '../middleware/auth.js'
-import { getCostResolver } from '../lib/orderCosts.js'
+import mongoose from 'mongoose'
+import { resolveOrderItems, reserveForOrder, cancelReservation, stockForStatusChange, StockError } from '../lib/stock.js'
 
 // Cost prices are admin-only — never return them on storefront endpoints
 const CUSTOMER_FIELDS = '-items.unitCost'
@@ -100,18 +101,34 @@ storefrontOrdersRouter.post('/', async (req, res) => {
       return res.status(400).json({ message: 'subtotal and total must be numbers (paise).' })
     }
 
-    // Snapshot cost at time of sale (server-side only — ignore any client value)
-    const costOf = await getCostResolver(items)
-    const itemsWithCost = items.map(({ unitCost, ...item }) => ({ // eslint-disable-line no-unused-vars
-      ...item,
-      unitCost: costOf(item),
-    }))
+    // Match each line to its product variant (fills variantId, SKU and the
+    // cost-at-sale snapshot — client values for these are ignored)
+    let resolved
+    try {
+      resolved = await resolveOrderItems(items.map(({ unitCost, variantId, ...item }) => item)) // eslint-disable-line no-unused-vars
+    } catch (err) {
+      if (err instanceof StockError) return res.status(err.status).json({ message: err.message })
+      throw err
+    }
+
+    // Hold the stock before saving — refuse the order if anything has sold out
+    const orderId = new mongoose.Types.ObjectId()
+    try {
+      await reserveForOrder(resolved, { orderId, actor: sessionUserId ?? 'system' })
+    } catch (err) {
+      if (err instanceof StockError) {
+        return res.status(err.status).json({ message: `Sorry — ${err.message} Please update your bag and try again.`, outOfStock: true })
+      }
+      throw err
+    }
 
     const order = new Order({
+      _id: orderId,
       customer: { ...customer, email: customer.email.toLowerCase().trim() },
       address,
-      items: itemsWithCost,
+      items: resolved,
       channel: 'web',
+      stockState: 'reserved',
       subtotal,
       shippingAmount: shippingAmount ?? 0,
       total,
@@ -119,7 +136,12 @@ storefrontOrdersRouter.post('/', async (req, res) => {
       userId: sessionUserId ?? undefined,
     })
 
-    await order.save()
+    try {
+      await order.save()
+    } catch (err) {
+      await cancelReservation(resolved, { orderId }).catch(e => console.error('[orders] release after failed save:', e.message))
+      throw err
+    }
 
     res.status(201).json({
       orderNumber: order.orderNumber,
@@ -191,12 +213,26 @@ adminOrdersRouter.patch('/:id/status', async (req, res) => {
     if (!VALID.includes(status)) {
       return res.status(400).json({ message: `Invalid status. Must be one of: ${VALID.join(', ')}` })
     }
+    const existing = await Order.findById(req.params.id).lean()
+    if (!existing) return res.status(404).json({ message: 'Order not found.' })
+    if (existing.status === status) {
+      return res.json(await Order.findById(existing._id).select(adminFields(req)).lean())
+    }
+
+    // Deduct, release or restock to match the new status
+    let stockState
+    try {
+      stockState = await stockForStatusChange(existing, status, req.user._id.toString())
+    } catch (err) {
+      if (err instanceof StockError) return res.status(err.status).json({ message: `Can't change status: ${err.message}` })
+      throw err
+    }
+
     const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      { status },
+      existing._id,
+      { status, ...(stockState ? { stockState } : {}) },
       { new: true, runValidators: true },
     ).select(adminFields(req)).lean()
-    if (!order) return res.status(404).json({ message: 'Order not found.' })
     res.json(order)
   } catch (err) {
     console.error('[admin/orders] updateStatus:', err)

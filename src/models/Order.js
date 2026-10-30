@@ -10,6 +10,8 @@ import mongoose from 'mongoose'
 const orderItemSchema = new mongoose.Schema(
   {
     productId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+    // Exact variant this line took stock from (set server-side when the order is placed)
+    variantId:   { type: mongoose.Schema.Types.ObjectId },
     name:        { type: String, required: true },
     brand:       { type: String },
     sku:         { type: String },
@@ -54,6 +56,13 @@ const orderSchema = new mongoose.Schema(
       enum:    ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'],
       default: 'pending',
     },
+    // What this order has done to stock (see lib/stock.js). Missing on orders
+    // placed before stock tracking — their status changes never touch stock.
+    //   reserved  — held (reserved += qty) while pending
+    //   deducted  — taken from stock (confirmed onwards)
+    //   released  — reservation dropped (cancelled while pending)
+    //   restocked — put back into stock (cancelled after confirming)
+    stockState: { type: String, enum: ['reserved', 'deducted', 'released', 'restocked'] },
     // Where the order came from — storefront checkout, WhatsApp, or entered by staff
     channel: { type: String, enum: ['web', 'whatsapp', 'admin'], default: 'web' },
     notes:  { type: String, trim: true },
