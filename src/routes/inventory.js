@@ -16,7 +16,7 @@
 import { Router } from 'express'
 import mongoose from 'mongoose'
 import { z } from 'zod'
-import { Order } from '../models/Order.js'
+import { Order, PLACED } from '../models/Order.js'
 import { Product } from '../models/Product.js'
 import { StockMovement } from '../models/StockMovement.js'
 import { User } from '../models/User.js'
@@ -38,7 +38,7 @@ const available  = (v) => Math.max(0, (v.stock ?? 0) - (v.reserved ?? 0))
  * Loads all non-cancelled orders — fine at this store's size.
  */
 async function salesByVariant(products, since) {
-  const orders = await Order.find({ status: { $ne: 'cancelled' } })
+  const orders = await Order.find({ ...PLACED, status: { $ne: 'cancelled' } })
     .select('createdAt items.variantId items.sku items.productId items.name items.variantType items.sizeMl items.quantity')
     .lean()
 

@@ -19,6 +19,9 @@ export const config = {
     .map(s => s.trim())
     .filter(Boolean),
 
+  // Links in customer emails — defaults to the first CLIENT_ORIGIN (the storefront)
+  storefrontUrl: (process.env.STOREFRONT_URL ?? (process.env.CLIENT_ORIGIN ?? 'http://localhost:3000').split(',')[0]).trim().replace(/\/+$/, ''),
+
   // TOTP secret encryption key — must be 64 hex chars (32 bytes)
   totpKey: process.env.TOTP_ENCRYPTION_KEY ??
     '0000000000000000000000000000000000000000000000000000000000000000',

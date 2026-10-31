@@ -10,7 +10,7 @@
  */
 
 import { Router } from 'express'
-import { Order } from '../models/Order.js'
+import { Order, PLACED } from '../models/Order.js'
 import { Product } from '../models/Product.js'
 import { getCostResolver } from '../lib/orderCosts.js'
 
@@ -81,7 +81,7 @@ async function periodRange(period, now) {
     label = `FY ${fyYear}–${String(fyYear + 1).slice(2)}`
   } else {
     // Lifetime — from the day of the first order
-    const first = await Order.findOne({ status: { $ne: 'cancelled' } }).sort({ createdAt: 1 }).select('createdAt').lean()
+    const first = await Order.findOne({ ...PLACED, status: { $ne: 'cancelled' } }).sort({ createdAt: 1 }).select('createdAt').lean()
     start = istDayStart(first?.createdAt ?? now)
     label = first ? `Since ${istKey(first.createdAt, 'day')}` : null
   }
@@ -122,6 +122,7 @@ dashboardRouter.get('/summary', async (req, res) => {
     const { start, bucket, label, previous: prevRange } = await periodRange(period, now)
 
     const all = await Order.find({
+      ...PLACED,
       status:    { $ne: 'cancelled' },
       createdAt: { $gte: prevRange?.start ?? start, $lte: now },
     })
@@ -204,7 +205,7 @@ dashboardRouter.get('/attention', async (_req, res) => {
   try {
     const [pending, lowStock] = await Promise.all([
       // Orders waiting to be confirmed — oldest first
-      Order.find({ status: 'pending' })
+      Order.find({ ...PLACED, status: 'pending' })
         .sort({ createdAt: 1 })
         .limit(10)
         .select('orderNumber customer.name total createdAt')

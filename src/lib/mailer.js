@@ -23,9 +23,14 @@ function getResend() {
 
 const FROM = process.env.RESEND_FROM ?? 'Snifftok <onboarding@resend.dev>'
 
+/** Send one email. Throws if Resend isn't configured or rejects it. */
+export async function sendEmail({ to, subject, text, html }) {
+  const { error } = await getResend().emails.send({ from: FROM, to, subject, text, html })
+  if (error) throw new Error(`Resend error: ${error.message}`)
+}
+
 export async function sendOtpEmail(email, code) {
-  const { error } = await getResend().emails.send({
-    from:    FROM,
+  await sendEmail({
     to:      email,
     subject: `${code} — Your Snifftok sign-in code`,
     text: [
@@ -85,8 +90,4 @@ export async function sendOtpEmail(email, code) {
 </body>
 </html>`,
   })
-
-  if (error) {
-    throw new Error(`Resend error: ${error.message}`)
-  }
 }

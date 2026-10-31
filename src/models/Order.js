@@ -63,6 +63,21 @@ const orderSchema = new mongoose.Schema(
     //   released  — reservation dropped (cancelled while pending)
     //   restocked — put back into stock (cancelled after confirming)
     stockState: { type: String, enum: ['reserved', 'deducted', 'released', 'restocked'] },
+    // Online payment (Razorpay). The store is prepaid-only: an order with
+    // paymentStatus 'pending'/'failed' isn't placed yet (see PLACED). Missing on
+    // orders from before payments, WhatsApp and staff-entered orders.
+    paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'] },
+    payment: {
+      provider:          { type: String },          // 'razorpay'
+      razorpayOrderId:   { type: String, index: true },
+      razorpayPaymentId: { type: String },
+      method:            { type: String },          // upi | card | netbanking | wallet …
+      paidAt:            { type: Date },
+      lastError:         { type: String },          // most recent failed attempt
+      note:              { type: String },          // e.g. paid after the order expired — refund needed
+    },
+    // When the "order confirmed" email went out — set once, so it's never sent twice
+    confirmationEmailAt: { type: Date },
     // Where the order came from — storefront checkout, WhatsApp, or entered by staff
     channel: { type: String, enum: ['web', 'whatsapp', 'admin'], default: 'web' },
     notes:  { type: String, trim: true },
@@ -82,6 +97,13 @@ orderSchema.pre('save', async function () {
     this.orderNumber = `ORD-${ymd}-${String(count + 1).padStart(4, '0')}`
   }
 })
+
+/**
+ * Filter for orders that actually exist for the business: paid, or not paid
+ * online at all (older / WhatsApp / staff orders). Unpaid checkouts are only
+ * a stock hold until they're paid or expire.
+ */
+export const PLACED = { paymentStatus: { $nin: ['pending', 'failed'] } }
 
 orderSchema.index({ status: 1, createdAt: -1 })
 orderSchema.index({ createdAt: -1 })

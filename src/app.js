@@ -20,6 +20,7 @@ import storefrontRouter from './routes/storefront.js'
 import { storefrontOrdersRouter, adminOrdersRouter } from './routes/orders.js'
 import { dashboardRouter } from './routes/dashboard.js'
 import { inventoryRouter } from './routes/inventory.js'
+import { razorpayWebhook } from './routes/webhooks.js'
 import { adminEventSectionRouter, storefrontEventSectionRouter } from './routes/eventSection.js'
 import { requireAuth, requireAdminOrStaff, requireAdmin } from './middleware/auth.js'
 
@@ -49,6 +50,9 @@ app.use(cors(corsOptions))
 app.use(helmet())
 
 // ── Body parsing ──────────────────────────────────────────────────────────────
+// Razorpay webhook needs the raw body for its signature — before express.json()
+app.post('/api/webhooks/razorpay', express.raw({ type: 'application/json', limit: '1mb' }), razorpayWebhook)
+
 app.use(express.json({ limit: '1mb' }))
 app.use(express.urlencoded({ extended: false }))
 app.use(cookieParser())

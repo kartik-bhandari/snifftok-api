@@ -3,13 +3,20 @@
  * Integration tests for /api/admin/dashboard/* and unit-cost handling on orders.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest'
 import request from 'supertest'
 import { User } from '../models/User.js'
 import { Order } from '../models/Order.js'
 import { Product } from '../models/Product.js'
 import app from '../app.js'
 import { signToken } from '../lib/jwt.js'
+import { customerCookie } from './fixtures/customer.js'
+
+// Checkout needs online payment switched on — Razorpay is mocked, no network calls
+vi.mock('razorpay', () => ({ default: class { constructor() { this.orders = { create: async ({ amount, receipt }) => ({ id: `order_rzp_${receipt}`, amount }) } } } }))
+const RZP_ENV = { RAZORPAY_KEY_ID: 'rzp_test_key', RAZORPAY_KEY_SECRET: 'test_secret' }
+beforeAll(() => Object.assign(process.env, RZP_ENV))
+afterAll(() => { for (const k of Object.keys(RZP_ENV)) delete process.env[k] })
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -235,6 +242,7 @@ describe('Order unit cost', () => {
     await createProduct()
     const created = await request(app)
       .post('/api/storefront/orders')
+      .set('Cookie', await customerCookie())
       .set('Content-Type', 'application/json')
       .set('X-Requested-With', 'snifftok-web')
       .send(orderBody)
@@ -244,6 +252,7 @@ describe('Order unit cost', () => {
     expect(saved.items[0].unitCost).toBe(100000)
     expect(saved.channel).toBe('web')
 
+    await Order.updateOne({ _id: saved._id }, { paymentStatus: 'paid' })   // unpaid orders can't be looked up
     const lookup = await request(app)
       .get(`/api/storefront/orders/lookup?email=riya@test.com&orderNumber=${created.body.orderNumber}`)
     expect(lookup.status).toBe(200)
@@ -254,6 +263,7 @@ describe('Order unit cost', () => {
     const product = await createProduct()
     const created = await request(app)
       .post('/api/storefront/orders')
+      .set('Cookie', await customerCookie())
       .set('Content-Type', 'application/json')
       .set('X-Requested-With', 'snifftok-web')
       .send({ ...orderBody, items: [bottle(1, { sku: undefined, productId: product._id.toString() })] })

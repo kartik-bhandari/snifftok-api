@@ -97,16 +97,28 @@ async function applyAll(lines, change, opts, { reason, orderId, actor }) {
  * Throws StockError(400) if an item doesn't match any product.
  */
 export async function resolveOrderItems(items) {
-  const match = await loadVariantIndex(items, 'name variants._id variants.sku variants.type variants.sizeMl variants.costPrice')
+  const match = await loadVariantIndex(
+    items,
+    'name brand isActive variants._id variants.sku variants.type variants.sizeMl variants.costPrice variants.minProfit variants.pricing',
+  )
   return items.map(item => {
     const hit = match(item)
-    if (!hit) throw new StockError(`${item.name ?? 'An item in your bag'} is no longer available.`, 400)
+    if (!hit || hit.product.isActive === false) {
+      throw new StockError(`${item.name ?? 'An item in your bag'} is no longer available.`, 400)
+    }
     return {
       ...item,
-      productId: hit.product._id,
-      variantId: hit.variant._id,
-      sku:       hit.variant.sku,
-      unitCost:  hit.variant.costPrice,
+      // Canonical product details — never trust the client for these
+      productId:   hit.product._id,
+      variantId:   hit.variant._id,
+      sku:         hit.variant.sku,
+      name:        hit.product.name,
+      brand:       hit.product.brand ?? item.brand,
+      variantType: hit.variant.type,
+      sizeMl:      hit.variant.sizeMl,
+      unitCost:    hit.variant.costPrice,
+      // Used by lib/checkout.js to price the line server-side
+      _variant:    hit.variant,
     }
   })
 }

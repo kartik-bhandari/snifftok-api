@@ -4,7 +4,7 @@
  * release / restock on cancel, re-take when reopened.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from 'vitest'
 import request from 'supertest'
 import { User } from '../models/User.js'
 import { Order } from '../models/Order.js'
@@ -12,9 +12,17 @@ import { Product } from '../models/Product.js'
 import { StockMovement } from '../models/StockMovement.js'
 import app from '../app.js'
 import { signToken } from '../lib/jwt.js'
+import { customerCookie } from './fixtures/customer.js'
 
-let admin
+// Checkout needs online payment switched on — Razorpay is mocked, no network calls
+vi.mock('razorpay', () => ({ default: class { constructor() { this.orders = { create: async ({ amount, receipt }) => ({ id: `order_rzp_${receipt}`, amount }) } } } }))
+const RZP_ENV = { RAZORPAY_KEY_ID: 'rzp_test_key', RAZORPAY_KEY_SECRET: 'test_secret' }
+beforeAll(() => Object.assign(process.env, RZP_ENV))
+afterAll(() => { for (const k of Object.keys(RZP_ENV)) delete process.env[k] })
+
+let admin, shopper
 beforeEach(async () => {
+  shopper = await customerCookie()
   const user = await User.create({ email: 'admin@test.com', name: 'Admin', role: 'admin', sessionVersion: 1, isActive: true })
   admin = signToken({ sub: user._id.toString(), role: 'admin', v: 1 })
   await Product.create({
@@ -39,6 +47,7 @@ const line = (qty, extra = {}) => ({
 
 const placeOrder = (items) => request(app)
   .post('/api/storefront/orders')
+  .set('Cookie', shopper)
   .set('Content-Type', 'application/json')
   .set('X-Requested-With', 'snifftok-web')
   .send({
@@ -100,6 +109,8 @@ describe('Changing order status', () => {
   let orderId
   beforeEach(async () => {
     orderId = (await placeOrder([line(2)])).body.orderId
+    // Paid but still pending — staff move it from here
+    await Order.updateOne({ _id: orderId }, { paymentStatus: 'paid' })
   })
 
   it('confirming deducts the reservation from stock', async () => {
